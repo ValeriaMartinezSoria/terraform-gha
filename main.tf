@@ -1,32 +1,70 @@
-data "aws_vpc" "selected" {
-  filter {
-    name   = "tag:Name"
-    values = ["andres-vpc-vpc"]
+#############################################
+# 1. CREAR VPC
+#############################################
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "mi-vpc"
   }
 }
 
-data "aws_subnets" "selected" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected.id]
+#############################################
+# 2. CREAR SUBNET PÚBLICA
+#############################################
+resource "aws_subnet" "public_subnet" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "mi-public-subnet"
   }
 }
 
-data "aws_ami" "amazon_linux" {
-  most_recent = true
+#############################################
+# 3. INTERNET GATEWAY
+#############################################
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
 
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-kernel-*-x86_64"]
+  tags = {
+    Name = "mi-igw"
   }
-
-  owners = ["amazon"]
 }
 
+#############################################
+# 4. ROUTE TABLE PUBLICA
+#############################################
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.main.id
 
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "mi-public-rt"
+  }
+}
+
+#############################################
+# 5. ASOCIAR SUBNET CON ROUTE TABLE
+#############################################
+resource "aws_route_table_association" "public_subnet_assoc" {
+  subnet_id      = aws_subnet.public_subnet.id
+  route_table_id = aws_route_table.public_rt.id
+}
+
+#############################################
+# 6. SECURITY GROUP
+#############################################
 resource "aws_security_group" "web_sg" {
-  name        = "web-datasource-sg-2"
-  vpc_id      = data.aws_vpc.selected.id
+  name   = "mi-web-sg"
+  vpc_id = aws_vpc.main.id
 
   ingress {
     from_port   = 22
@@ -42,13 +80,6 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
     from_port   = 0
     to_port     = 0
@@ -57,25 +88,28 @@ resource "aws_security_group" "web_sg" {
   }
 
   tags = {
-    Name = "web-datasource-sg-2"
+    Name = "mi-web-sg"
   }
 }
 
-# 4. Crear EC2 usando esos data sources
+#############################################
+# 7. EC2
+#############################################
 resource "aws_instance" "web" {
-  ami           = data.aws_ami.amazon_linux.id
-  instance_type = "t3.small"
-  subnet_id     = data.aws_subnets.selected.ids[0]
+  ami                         = "ami-051b98ceceb268091"
+  instance_type               = "t3.small"
+  subnet_id                   = aws_subnet.public_subnet.id
   associate_public_ip_address = true
+  vpc_security_group_ids      = [aws_security_group.web_sg.id]
 
   user_data = <<EOF
 #!/bin/bash
 sudo yum install httpd -y
-echo "Hola Mundo desde Terraform con Data Sources" > /var/www/html/index.html
+echo "Hola desde VPC creada con Terraform!" > /var/www/html/index.html
 sudo systemctl enable --now httpd
 EOF
 
   tags = {
-    Name = "andres-web-datasource"
+    Name = "mi-ec2"
   }
 }
